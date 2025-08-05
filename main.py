@@ -8,11 +8,14 @@ import heapq
 
 # assign
 # Na - jobs
+Na = 0
 # Nw - workstations
+Nw = 3
 # Nr - robots
+Nr = 0
 # pre-process:
 #     time-start[j][r]
-#     time-end[j][r]
+#     time-end[j][r] = CT - T[j][r] Công việc bắt buộc thực hiện ở thời gian này để kịp hoàn thành trước CT
 #     run_time[j][r]
 #     ip[j][s] = true Nếu j có thể bắt đầu tại trạm này
 #encoding
@@ -24,7 +27,7 @@ UB = int()
 
 
 def read_data(file_path):
-    global T, graph
+    global T, graph, Na, Nr
 
     with open(file_path, 'r') as f:
         reader = csv.DictReader(f, delimiter='\t')
@@ -38,6 +41,8 @@ def read_data(file_path):
             # Lưu thời gian của từng robot
             for r in range(1, 5):
                 T[task][r] = int(row[f'Robot {r}'])
+    Na = len(T)
+    Nr = len(T[1])
 
 def upperbound_lowerbound(T, graph, Nw):
     """
@@ -108,7 +113,7 @@ def upperbound_lowerbound(T, graph, Nw):
     total_min_time = sum(min_proc_time[j] for j in T)
     UB = total_min_time / Nw
 
-def compute_ip(Na, Nr, Nw, T, graph, robot_assignment):
+def Pre_processing(Na, Nr, Nw, T, graph, robot_assignment):
     """
     Trả về ip[j][s] = 1 nếu task j không được gán vào station s (do không đủ station để thực hiện các task kế tiếp)
     """
@@ -229,7 +234,7 @@ def generate_solver(X, Y, Z, S, A):
                 clauses.append(-X[j][s])
 
 def calculate_time():
-    time
+    time = 0
     global Z
     for j in range(Na):
         for s in range(Nw):
