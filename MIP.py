@@ -9,25 +9,49 @@ Nr = 0 # Số robot
 T = defaultdict(dict)  # T[j][r] là thời gian robot r làm task j
 graph = defaultdict(list)  # graph[j] là danh sách các task kế tiếp của task j
 
+import csv
+
 
 def read_data(file_path):
     global T, graph, Na, Nr
 
-    T.clear()
-    graph.clear()
+    # Khởi tạo lại các biến global
+    T = {}
+    graph = {}
 
     with open(file_path, 'r') as f:
         reader = csv.DictReader(f, delimiter='\t')
+
+        # Lấy tên các cột
+        fieldnames = reader.fieldnames
+
+        # Tìm các cột Robot và lưu vào một danh sách
+        robot_columns = [col for col in fieldnames if col.startswith('Robot ')]
+
+        # Cập nhật số lượng robot (Nr)
+        Nr = len(robot_columns)
+
         for row in reader:
             task = int(row['Task']) - 1  # 0-based index
+
+            # Xử lý cột Successor
             successors = [int(s.strip()) - 1 for s in row['Successor'].split(',')] if row['Successor'].strip() else []
             graph[task] = successors
 
-            for r in range(1, 5):
-                T[task][r - 1] = int(row[f'Robot {r}'])
+            # Khởi tạo danh sách thời gian cho task hiện tại
+            T[task] = [0] * Nr
+
+            # Lặp qua danh sách các cột Robot đã tìm được
+            for i, robot_col in enumerate(robot_columns):
+                T[task][i] = int(row[robot_col])
+
+    # Cập nhật số lượng nhiệm vụ (Na)
     Na = len(T)
-    Nr = len(T[1])
+
     print("Đọc dữ liệu thành công!")
+    print(f"Tổng số nhiệm vụ (Na): {Na}")
+    print(f"Tổng số robot (Nr): {Nr}")
+    print(f"Dữ liệu T: {T}")
     return
 
 def build_model(w1, w2):
@@ -62,7 +86,7 @@ def build_model(w1, w2):
         for i in graph[j]:
             lhs = solver.Sum(s * X[i][s] for s in range(Nw))
             rhs = solver.Sum(s * X[j][s] for s in range(Nw))
-            solver.Add(lhs <= rhs)
+            solver.Add(rhs <= lhs)
 
     for s in range(Nw):
         total_time = solver.Sum(Z[i][s][r] * T[i][r] for i in range(Na) for r in range(Nr))
@@ -76,7 +100,7 @@ def build_model(w1, w2):
 
     return solver, X, Y, Z, CT, Er
 
-read_data("Dataset.txt")
+read_data("Dataset2.txt")
 solver, X, Y, Z, CT, Er = build_model(1, 0)
 
 status = solver.Solve()

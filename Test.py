@@ -19,24 +19,52 @@ def get_key(value):
         if val == value:
             return key
 
-
 def read_data(file_path):
     global T, graph, Na, Nr
 
-    T.clear()
-    graph.clear()
+    # Khởi tạo lại các biến global
+    T = {}
+    graph = {}
 
     with open(file_path, 'r') as f:
         reader = csv.DictReader(f, delimiter='\t')
+
+        # Lấy tên tất cả các cột từ tệp
+        fieldnames = reader.fieldnames
+
+        # Tìm các cột có tên bắt đầu bằng 'Robot '
+        robot_columns = [col for col in fieldnames if col.startswith('Robot ')]
+
+        # Tự động xác định số lượng robot (Nr)
+        Nr = len(robot_columns)
+
         for row in reader:
-            task = int(row['Task']) - 1
-            successors = [int(s.strip()) - 1 for s in row['Successor'].split(',')] if row['Successor'].strip() else []
+            try:
+                task = int(row['Task']) - 1  # Chỉ số 0-based
+            except (ValueError, KeyError):
+                print(f"Lỗi: Không tìm thấy hoặc giá trị 'Task' không hợp lệ ở hàng: {row}")
+                continue
+
+            # Xử lý cột 'Successor'
+            successors_str = row.get('Successor', '').strip()
+            successors = [int(s.strip()) - 1 for s in successors_str.split(',') if s.strip()]
             graph[task] = successors
 
-            for r in range(1, 5):
-                T[task][r - 1] = int(row[f'Robot {r}'])
+            # Khởi tạo danh sách thời gian cho mỗi robot
+            T[task] = [0] * Nr
+
+            # Đọc dữ liệu cho từng robot một cách linh hoạt
+            for i, robot_col in enumerate(robot_columns):
+                try:
+                    T[task][i] = int(row[robot_col])
+                except (ValueError, KeyError):
+                    print(
+                        f"Cảnh báo: Giá trị '{robot_col}' không hợp lệ hoặc thiếu ở Task {task + 1}. Sử dụng giá trị mặc định là 0.")
+                    T[task][i] = 0
+
+    # Cập nhật số lượng nhiệm vụ (Na)
     Na = len(T)
-    Nr = len(T[list(T.keys())[0]]) if T else 0
+
     print(f"Đọc dữ liệu thành công! Tasks: {Na}, Robots: {Nr}")
     return
 
