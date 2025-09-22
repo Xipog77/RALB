@@ -2,7 +2,7 @@ import csv
 from collections import defaultdict, deque
 from ortools.linear_solver import pywraplp
 
-Nw = 3 # Số trạm
+Nw = 4 # Số trạm
 Na = 0 # Số công việc
 Nr = 0 # Số robot
 
@@ -100,7 +100,7 @@ def build_model(w1, w2):
 
     return solver, X, Y, Z, CT, Er
 
-read_data("Dataset2.txt")
+read_data("Dataset1.txt")
 solver, X, Y, Z, CT, Er = build_model(1, 0)
 
 status = solver.Solve()
