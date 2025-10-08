@@ -1,3 +1,5 @@
+import time
+
 from pysat.pb import PBEnc
 from pysat.solvers import Glucose3
 from pysat.formula import IDPool
@@ -112,8 +114,13 @@ def get_solution(this_solution):
     return assignment, station_runtime, solution
 
 
+import time
+from pysat.solvers import Glucose3
+from pysat.formula import IDPool
+
 def optimize_ct():
-    global var_map, var_counter, clauses, CT, time_end, previous_solutions, var_manager, LB, UB, ip
+    global var_map, var_counter, clauses, CT, time_end
+    global previous_solutions, var_manager, LB, UB, ip
     best_solution = None
     best_ct = float('inf')
     CT = int((LB + UB) / 2)
@@ -124,7 +131,12 @@ def optimize_ct():
     timeout_count = 0
     max_timeout = 5
 
+    # === BẮT ĐẦU ĐO THỜI GIAN ===
+    total_start = time.perf_counter()
+
     while left <= right and timeout_count < max_timeout:
+        iter_start = time.perf_counter()  # đo thời gian cho mỗi vòng lặp
+
         var_map = {}
         var_counter = 1
         var_manager = IDPool()
@@ -143,14 +155,12 @@ def optimize_ct():
             this_solution = [var for var in model if var > 0]
             assignment, station_runtime, solution = get_solution(this_solution)
             actual_ct = max(station_runtime) if station_runtime else 0
-            # print_solution(assignment)
 
             if actual_ct <= CT and actual_ct < best_ct:
                 best_ct = actual_ct
                 best_solution = assignment
                 previous_solutions.append(solution)
                 print(f"✅ Tìm được nghiệm tốt hơn với CT = {actual_ct}")
-                # print_solution(assignment)
                 CT = actual_ct - 1
             else:
                 CT -= 1
@@ -158,15 +168,24 @@ def optimize_ct():
             print(f"❌ Không tìm thấy nghiệm cho CT = {CT}")
             break
 
+        iter_end = time.perf_counter()
+        print(f"⏱ Thời gian vòng lặp: {iter_end - iter_start:.2f} giây\n")
+
+    total_end = time.perf_counter()
+    total_elapsed = total_end - total_start
+    # === KẾT THÚC ĐO THỜI GIAN ===
+
     if timeout_count >= max_timeout:
         print(f"⚠️ Dừng do quá nhiều timeout liên tiếp")
 
     if best_solution:
         print(f"\n🎉 NGHIỆM TỐI ƯU CUỐI CÙNG với CT = {best_ct}")
+        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
         print_solution(best_solution)
     else:
         print("❌ Không tìm được nghiệm hợp lệ.")
-        print(f"Debug info:")
+        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
+        print("Debug info:")
         print(f"- Tasks: {Na}, Stations: {Nw}, Robots: {Nr}")
         print(f"- LB: {LB}, UB: {UB}")
         print(f"- Min times: {Tjr_min_list[:5]}...")  # Show first 5
@@ -175,6 +194,7 @@ def optimize_ct():
         # Thử với CT rất lớn để kiểm tra
         print("\n🔍 Thử nghiệm với CT = 1000 để debug...")
         debug_test(1000)
+
 
 
 def dfs(v, visited, neighbors):
@@ -283,12 +303,12 @@ def generate_solver():
 
     # (1) Ràng buộc tiền nhiệm
     # j1 Cần làm trước j2 => j2 không thể ở trước j1
-    for j1 in range(Na):
-        for j2 in graph[j1]:
-            for s2 in range(Nw):
-                clause = [-get_var('X', j2, s2)]
-                clause += [get_var('X', j1, s1) for s1 in range(s2 + 1)]
-                clauses.append(clause)
+    # for j1 in range(Na):
+    #     for j2 in graph[j1]:
+    #         for s2 in range(Nw):
+    #             clause = [-get_var('X', j2, s2)]
+    #             clause += [get_var('X', j1, s1) for s1 in range(s2 + 1)]
+    #             clauses.append(clause)
     # (2) Mỗi công việc được gán cho đúng một trạm
 
     for j in range(Na):
