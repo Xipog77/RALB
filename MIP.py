@@ -9,9 +9,6 @@ Nr = 0 # Số robot
 T = defaultdict(dict)  # T[j][r] là thời gian robot r làm task j
 graph = defaultdict(list)  # graph[j] là danh sách các task kế tiếp của task j
 
-import csv
-
-
 def read_data(file_path):
     global T, graph, Na, Nr
 
@@ -100,7 +97,7 @@ def build_model(w1, w2):
 
     return solver, X, Y, Z, CT, Er
 
-read_data("Dataset2.txt")
+read_data("Dataset1.txt")
 solver, X, Y, Z, CT, Er = build_model(1, 0)
 
 status = solver.Solve()

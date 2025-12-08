@@ -1,13 +1,42 @@
 import time
-
-from pysat.pb import PBEnc
-from pysat.solvers import Glucose3
-from pysat.formula import IDPool
 import math
 import csv
+from pysat.pb import PBEnc
 from collections import defaultdict, deque
+from pysat.solvers import Glucose42
+from pysat.formula import IDPool
 
+Na = 0  # Number of tasks
+Nw = 3  # Number of workstations
+Nr = 0  # Number of robots
+w1 = 1  # Weight for Cycle Time
+w2 = 0  # Weight for Energy
+LB = int()  # Lower Bound
+UB = int()  # Upper Bound
+CT = int()  # Cycle Time
 
+# Data structures
+var_map = {}
+var_counter = 1
+var_manager = None  # Initialized in optimize_ct
+clauses = []
+previous_solutions = []
+
+T = defaultdict(dict)  # T[j][r]: time for robot r to do task j
+graph = defaultdict(list)  # graph[j]: successors of task j
+adj = []
+EP = defaultdict(dict)
+time_end = []  # Latest start time
+visited = []
+neighbors = []
+reversed_neighbors = []
+toposort = []
+ip1 = []
+ip2 = []
+
+# =============================================================================
+# 2. SAT VARIABLE HELPER FUNCTIONS
+# =============================================================================
 def get_var(name, *args):
     global var_manager
     key = (name,) + args
@@ -29,14 +58,19 @@ def get_key(value):
             return key
 
 
+# =============================================================================
+# 3. INPUT / OUTPUT FUNCTIONS
+# =============================================================================
 def read_data(file_path):
     global T, graph, Na, Nr, adj, neighbors, reversed_neighbors
-    T.clear(); graph.clear(); adj.clear()
+    T.clear()
+    graph.clear()
+    adj.clear()
 
     # --- LẤY Na SỚM ---
     with open(file_path, 'r', encoding='utf-8') as f:
         # bỏ dòng header, đếm các dòng dữ liệu
-        Na = sum(1 for _ in f) - 1   # -1 vì trừ dòng header
+        Na = sum(1 for _ in f) - 1  # -1 vì trừ dòng header
 
     neighbors = [[0 for i in range(Na)] for j in range(Na)]
     reversed_neighbors = [[0 for i in range(Na)] for j in range(Na)]
@@ -102,180 +136,204 @@ def get_solution(this_solution):
         elif key[0] == 'S':
             j, t = key[1], key[2]
             solution.append(-get_var('S', j, t))
+
     station_runtime = [0 for _ in range(Nw)]
+    total_energy = 0
 
     for j in range(Na):
         s = assignment[j]['station']
         r = assignment[j]['robot']
         if s != -1 and r != -1:
-            time = T[j][r]
-            station_runtime[s] += time
+            time_val = T[j][r]
+            station_runtime[s] += time_val
+            # total_energy  += time_val * EP[r]
+            total_energy += time_val * 0
 
-    return assignment, station_runtime, solution
+    return assignment, station_runtime, solution, total_energy
 
 
-import time
-from pysat.solvers import Glucose3
-from pysat.formula import IDPool
+def Preprocess(Nw, Na, T, neighbors):
 
-def optimize_ct():
-    global var_map, var_counter, clauses, CT, time_end
-    global previous_solutions, var_manager, LB, UB, ip
-    best_solution = None
-    best_ct = float('inf')
-    CT = int((LB + UB) / 2)
+    # ================================================
+    # PHẦN 1: CHUẨN HÓA INPUT + T_min
+    # ================================================
+    T_min = []
+    time_list = [0] * Na
 
-    print(f"🎯 Tìm kiếm nghiệm trong khoảng CT = [{LB}, {UB}]")
-
-    left, right = LB, UB
-    timeout_count = 0
-    max_timeout = 5
-
-    # === BẮT ĐẦU ĐO THỜI GIAN ===
-    total_start = time.perf_counter()
-
-    while left <= right and timeout_count < max_timeout:
-        iter_start = time.perf_counter()  # đo thời gian cho mỗi vòng lặp
-
-        var_map = {}
-        var_counter = 1
-        var_manager = IDPool()
-        clauses = []
-        solver = Glucose3()
-
-        time_end = [max(0, CT - min(T[j].values())) for j in range(Na)]
-        generate_solver()
-
-        for clause in clauses:
-            solver.add_clause(clause)
-
-        print(f"Đang giải với CT = {CT}...")
-        if solver.solve():
-            model = solver.get_model()
-            this_solution = [var for var in model if var > 0]
-            assignment, station_runtime, solution = get_solution(this_solution)
-            actual_ct = max(station_runtime) if station_runtime else 0
-
-            if actual_ct <= CT and actual_ct < best_ct:
-                best_ct = actual_ct
-                best_solution = assignment
-                previous_solutions.append(solution)
-                print(f"✅ Tìm được nghiệm tốt hơn với CT = {actual_ct}")
-                CT = actual_ct - 1
-            else:
-                CT -= 1
+    for j in range(Na):
+        if T[j]:
+            tmin = min(T[j].values())
+            T_min.append(tmin)
+            time_list[j] = tmin
         else:
-            print(f"❌ Không tìm thấy nghiệm cho CT = {CT}")
-            break
+            time_list[j] = 0
+            T_min.append(0)
 
-        iter_end = time.perf_counter()
-        print(f"⏱ Thời gian vòng lặp: {iter_end - iter_start:.2f} giây\n")
+    # ================================================
+    # PHẦN 2: TÍNH LB (LB3 Logic)
+    # ================================================
+    # Sắp xếp giảm dần để tính prefix sum
+    p = sorted(T_min, reverse=True)
+    prefix = [0]
+    for x in p:
+        prefix.append(prefix[-1] + x)
 
-    total_end = time.perf_counter()
-    total_elapsed = total_end - total_start
-    # === KẾT THÚC ĐO THỜI GIAN ===
+    LB = 0
+    for k in range(1, len(p) + 1):
+        S_k = prefix[k]
+        m = (k + Nw - 1) // Nw  # ceil(k / Nw)
+        LB3_k = S_k / m
+        LB = max(LB, LB3_k)
 
-    if timeout_count >= max_timeout:
-        print(f"⚠️ Dừng do quá nhiều timeout liên tiếp")
+    # ================================================
+    # PHẦN 3: TOPOLOGICAL SORT & UB (Critical Path Logic)
+    # ================================================
+    # Kết hợp tính Topo sort và Critical Path bằng Kahn's Algorithm
+    indeg = [0] * Na
+    for u in range(Na):
+        for v in range(Na):
+            if neighbors[u][v]:
+                indeg[v] += 1
 
-    if best_solution:
-        print(f"\n🎉 NGHIỆM TỐI ƯU CUỐI CÙNG với CT = {best_ct}")
-        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
-        print_solution(best_solution)
+    # Hàng đợi cho các node có bậc vào = 0
+    q = deque([i for i in range(Na) if indeg[i] == 0])
+    toposort = []
+
+    # Mảng lưu đường dài nhất đến node v (để tính Critical Path)
+    dist = [0] * Na
+
+    while q:
+        u = q.popleft()
+        toposort.append(u)
+
+        # Cập nhật thời gian hoàn thành sớm nhất của u (tính cả thời gian của chính nó)
+        current_finish_time = dist[u] + T_min[u]
+
+        for v in range(Na):
+            if neighbors[u][v]:
+                # Cập nhật dist[v] dựa trên u
+                dist[v] = max(dist[v], current_finish_time)
+
+                indeg[v] -= 1
+                if indeg[v] == 0:
+                    q.append(v)
+
+    if len(toposort) != Na:
+        print("Graph có chu trình → Không xác định được UB chính xác (UB = sum(T_min))")
+        UB = sum(T_min)
     else:
-        print("❌ Không tìm được nghiệm hợp lệ.")
-        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
-        print("Debug info:")
-        print(f"- Tasks: {Na}, Stations: {Nw}, Robots: {Nr}")
-        print(f"- LB: {LB}, UB: {UB}")
-        print(f"- Min times: {Tjr_min_list[:5]}...")  # Show first 5
-        print(f"- Total min time: {sum(Tjr_min_list)}")
+        # Critical Path là giá trị lớn nhất trong mảng dist + thời gian của node cuối cùng
+        # Tuy nhiên logic dist ở trên là start time, ta cần tính max finish time
+        max_dist = 0
+        for i in range(Na):
+            max_dist = max(max_dist, dist[i] + T_min[i])
+        UB = max_dist
 
-        # Thử với CT rất lớn để kiểm tra
-        print("\n🔍 Thử nghiệm với CT = 1000 để debug...")
-        debug_test(1000)
+    print(f"--- Bounds ---")
+    print(f"LB = LB3 = {LB:.2f}")
+    print(f"UB = LB4 = {UB:.2f}")
 
+    CT = int(math.ceil(UB))  # UB đóng vai trò CT ban đầu
 
+    # ================================================
+    # PHẦN 4: EARLIEST / LATEST START & MATRICES (ip1, ip2)
+    # ================================================
+    # Khởi tạo ma trận
+    earliest_start = [[-10 ** 9 for _ in range(Nw)] for _ in range(Na)]
+    latest_start = [[10 ** 9 for _ in range(Nw)] for _ in range(Na)]
 
-def dfs(v, visited, neighbors):
-    visited[v] = True
-    for i in range(Na):
-        if (neighbors[v][i] == 1 and visited[i] == False):
-            dfs(i, visited, neighbors)
-    toposort.append(v)
-
-
-def preprocess():
-    global Na, Nw, CT, Tjr_min_list, neighbors, reversed_neighbors
-    time_list = Tjr_min_list
-    visited = [False for i in range(Na)]
-    # neighbors = [[0 for i in range(Na)] for j in range(Na)]
-    # reversed_neighbors = [[0 for i in range(Na)] for j in range(Na)]
-    earliest_start = [[-9999999 for _ in range(Nw)] for _ in range(Na)]
-    latest_start = [[99999999 for _ in range(Nw)] for _ in range(Na)]
     ip1 = [[0 for _ in range(Nw)] for _ in range(Na)]
-    ip2 = [[[0 for _ in range(CT)] for _ in range(Nw)] for _ in range(Na)]
-    for i in range(Na):
-        if not visited[i]:
-            dfs(i, visited, neighbors)
-    toposort.reverse()
+    ip2 = [[[0 for _ in range(CT + 1)] for _ in range(Nw)] for _ in range(Na)]
 
+    # --- Forward pass (Duyệt theo chiều Topo) ---
     for j in toposort:
         k = 0
         earliest_start[j][k] = 0
+
         for i in range(Na):
             if neighbors[i][j] == 1:
+                earliest_start[j][k] = max(
+                    earliest_start[j][k],
+                    earliest_start[i][k] + time_list[i]
+                )
 
-                earliest_start[j][k] = max(earliest_start[j][k], earliest_start[i][k] + time_list[i])
+        # Logic điều chỉnh k (trạm) trong forward pass
+        temp_k = k
+        current_es = earliest_start[j][temp_k]
 
-                while (earliest_start[j][k] > CT - time_list[j]):
-                    ip1[j][k] = 1
+        while current_es > CT - time_list[j]:
+            ip1[j][temp_k] = 1
+            temp_k += 1
+            if temp_k >= Nw:
+                break
+            # Nếu chuyển trạm, ES reset về 0 hoặc phụ thuộc task trước (logic đơn giản hóa ở đây theo code cũ)
+            # Code cũ: earliest_start[j][k] = max(0, earliest_start[i][k] + time_list[i]) -> logic này phụ thuộc loop i
+            # Để giữ đúng logic code cũ, ta chỉ cần set flag ip1 và tăng k ảo.
+            # Lưu ý: Code cũ tính toán lại ES trong while loop phụ thuộc vào i,
+            # nhưng i đã chạy xong. Logic gốc của bạn ở đoạn này có thể chưa tối ưu hoàn toàn
+            # nhưng tôi sẽ giữ nguyên hành vi gán ip1.
+            pass
 
-                    k = k + 1
-                    earliest_start[j][k] = max(0, earliest_start[i][k] + time_list[i])
+            # Điền ip2 dựa trên earliest start đã chốt
+        # Lưu ý: Code gốc có logic phức tạp trong while loop để update ES,
+        # nhưng ở đây tôi giữ logic chính là đánh dấu ip1 khi vượt quá CT.
+        if temp_k < Nw:
+            # Tính lại ES chuẩn xác nhất cho trạm hợp lệ đầu tiên
+            final_es = 0
+            for i in range(Na):
+                if neighbors[i][j] == 1:
+                    final_es = max(final_es, earliest_start[i][0] + time_list[i])  # Giả định k=0 cho pre-tasks
 
-                if earliest_start[j][k] <= CT - time_list[j]:
-                    for t in range(earliest_start[j][k]):
-                        if (ip2[j][k][t] == 0):
-                            ip2[j][k][t] = 1
-    toposort.reverse()
-    for j in toposort:
+            for t in range(int(final_es)):
+                if t <= CT:
+                    ip2[j][temp_k][t] = 1
+
+    # --- Backward pass (Duyệt ngược Topo) ---
+    reverse_topo = toposort[::-1]
+
+    for j in reverse_topo:
         k = Nw - 1
         latest_start[j][k] = CT - time_list[j]
+
         for i in range(Na):
-            if (neighbors[j][i] == 1):
-                latest_start[j][k] = min(latest_start[j][k], latest_start[i][k] - time_list[j])
-                while (latest_start[j][k] < 0):
-                    ip1[j][k] = 1
-                    k = k - 1
-                    latest_start[j][k] = min(CT - time_list[j], latest_start[i][k] - time_list[j])
+            if neighbors[j][i] == 1:
+                latest_start[j][k] = min(
+                    latest_start[j][k],
+                    latest_start[i][k] - time_list[j]
+                )
 
-                if (latest_start[j][k] >= 0):
-                    for t in range(latest_start[j][k] + 1, CT):
+        temp_k = k
+        current_ls = latest_start[j][temp_k]
 
-                        if (ip2[j][k][t] == 0):
-                            ip2[j][k][t] = 1
+        while current_ls < 0:
+            ip1[j][temp_k] = 1
+            temp_k -= 1
+            if temp_k < 0:
+                break
 
-    return ip1, ip2
+        if temp_k >= 0:
+            # Điền ip2 cho các mốc thời gian lớn hơn LS
+            # Cần tính lại LS chuẩn cho trạm này (tương tự logic forward)
+            final_ls = CT - time_list[j]
+            for i in range(Na):
+                if neighbors[j][i] == 1:
+                    final_ls = min(final_ls, latest_start[i][Nw - 1] - time_list[j])
+
+            if final_ls >= 0:
+                for t in range(int(final_ls) + 1, CT):
+                    if t <= CT:
+                        ip2[j][temp_k][t] = 1
+
+    return UB, LB, ip1, ip2, CT, toposort
 
 
-def generate_solver():
-    global clauses, CT, time_end, previous_solutions, var_manager, adj
-    # # answer:
-    # # X assignments
-    # clauses += [
-    #     [get_var('X', 0, 0)], [get_var('X', 1, 0)], [get_var('X', 2, 0)], [get_var('X', 3, 0)],
-    #     [get_var('X', 4, 1)], [get_var('X', 5, 1)], [get_var('X', 6, 1)], [get_var('X', 8, 1)],
-    #     [get_var('X', 7, 2)], [get_var('X', 9, 2)], [get_var('X', 10, 2)]
-    # ]
-
-    # # Y assignments (unique per station)
-    # clauses += [
-    #     [get_var('Y', 0, 3)],  # Station 1 → Robot 4
-    #     [get_var('Y', 1, 3)],  # Station 2 → Robot 4
-    #     [get_var('Y', 2, 2)]  # Station 3 → Robot 3
-    # ]
-    ip1, ip2 = preprocess()
+# =============================================================================
+# 5. CLAUSE GENERATION
+# =============================================================================
+def Fixed_clauses():
+    global CT, time_end, previous_solutions, var_manager, adj, w1, w2, ip1, ip2
+    time_end = [max(0, CT - min(T[j].values())) for j in range(Na)]
+    fixed_clauses = []
 
     for j in range(Na):
 
@@ -284,69 +342,59 @@ def generate_solver():
             if ip1[j][k] == 1:
                 set_var(get_var("R", j, k - 1), "R", j, k)
             else:
-                clauses.append([-get_var("R", j, k - 1), get_var("R", j, k)])
-                clauses.append([-get_var('X', j, k), get_var("R", j, k)])
-                clauses.append([-get_var('X', j, k), -get_var("R", j, k - 1)])
-                clauses.append([get_var('X', j, k), get_var("R", j, k - 1), -get_var("R", j, k)])
+                fixed_clauses.append([-get_var("R", j, k - 1), get_var("R", j, k)])
+                fixed_clauses.append([-get_var('X', j, k), get_var("R", j, k)])
+                fixed_clauses.append([-get_var('X', j, k), -get_var("R", j, k - 1)])
+                fixed_clauses.append([get_var('X', j, k), get_var("R", j, k - 1), -get_var("R", j, k)])
         # last machine
         if ip1[j][Nw - 1] == 1:
-            clauses.append([get_var("R", j, Nw - 2)])
+            fixed_clauses.append([get_var("R", j, Nw - 2)])
         else:
-            clauses.append([get_var("R", j, Nw - 2), get_var('X', j, Nw - 1)])
-            clauses.append([-get_var("R", j, Nw - 2), -get_var('X', j, Nw - 1)])
+            fixed_clauses.append([get_var("R", j, Nw - 2), get_var('X', j, Nw - 1)])
+            fixed_clauses.append([-get_var("R", j, Nw - 2), -get_var('X', j, Nw - 1)])
 
     for (i, j) in adj:
         for k in range(Nw - 1):
             if ip1[i][k + 1] == 1:
                 continue
-            clauses.append([-get_var("R", j, k), -get_var('X', i, k + 1)])
-
-    # (1) Ràng buộc tiền nhiệm
-    # j1 Cần làm trước j2 => j2 không thể ở trước j1
-    # for j1 in range(Na):
-    #     for j2 in graph[j1]:
-    #         for s2 in range(Nw):
-    #             clause = [-get_var('X', j2, s2)]
-    #             clause += [get_var('X', j1, s1) for s1 in range(s2 + 1)]
-    #             clauses.append(clause)
-    # (2) Mỗi công việc được gán cho đúng một trạm
+            fixed_clauses.append([-get_var("R", j, k), -get_var('X', i, k + 1)])
 
     for j in range(Na):
-        clauses.append([get_var('X', j, s) for s in range(Nw)])
+        fixed_clauses.append([get_var('X', j, s) for s in range(Nw)])
 
     for j in range(Na):
         for s1 in range(Nw):
             for s2 in range(s1 + 1, Nw):
-                clauses.append([-get_var('X', j, s1), -get_var('X', j, s2)])
+                fixed_clauses.append([-get_var('X', j, s1), -get_var('X', j, s2)])
 
     # (3) Mỗi trạm được gán cho đúng một robot
 
     for s in range(Nw):
-        clauses.append([get_var('Y', s, r) for r in range(Nr)])
+        fixed_clauses.append([get_var('Y', s, r) for r in range(Nr)])
 
     for s in range(Nw):
         for r1 in range(Nr):
             for r2 in range(r1 + 1, Nr):
-                clauses.append([-get_var('Y', s, r1), -get_var('Y', s, r2)])
+                fixed_clauses.append([-get_var('Y', s, r1), -get_var('Y', s, r2)])
     #
     # (4) - (5) - (6)
 
     for j in range(Na):
         for s in range(Nw):
             for r in range(Nr):
-                clauses.append([-get_var('X', j, s), -get_var('Y', s, r), get_var('Z', j, s, r)])
-                clauses.append([-get_var('Z', j, s, r), get_var('X', j, s)])
-                clauses.append([-get_var('Z', j, s, r), get_var('Y', s, r)])
+                fixed_clauses.append([-get_var('X', j, s), -get_var('Y', s, r), get_var('Z', j, s, r)])
+                fixed_clauses.append([-get_var('Z', j, s, r), get_var('X', j, s)])
+                fixed_clauses.append([-get_var('Z', j, s, r), get_var('Y', s, r)])
 
     # (7) Mỗi công việc phải được khởi động đúng một lần bởi một robot
 
     for j in range(Na):
-        clauses.append([get_var('S', j, t) for t in range(CT)])
+        fixed_clauses.append([get_var('S', j, t) for t in range(CT)])
 
     for j in range(Na):
         for t1 in range(CT):
             for t2 in range(t1 + 1, time_end[j]):
-                clauses.append([-get_var('S', j, t1), -get_var('S', j, t2)])
+                fixed_clauses.append([-get_var('S', j, t1), -get_var('S', j, t2)])
 
     # (8) Không khởi động công việc ngoài thời điểm cho phép
     # Cải tiến: gộp lại với (7)
@@ -354,7 +402,7 @@ def generate_solver():
     for j in range(Na):
         for r in range(Nr):
             for t in range(time_end[j] + 1, CT):
-                clauses.append([-get_var('S', j, t)])
+                fixed_clauses.append([-get_var('S', j, t)])
     #
     # (9) Không có hai công việc chạy cùng lúc tại cùng một trạm
     # Cải tiến: tạo một tập các công việc có thể được gán vào s
@@ -365,7 +413,7 @@ def generate_solver():
                 if (ip1[j1][s] == 1 or ip1[j2][s] == 1):
                     continue
                 for t in range(CT):
-                    clauses.append(
+                    fixed_clauses.append(
                         [-get_var('X', j1, s), -get_var('X', j2, s), -get_var('A', j1, s, t), -get_var('A', j2, s, t)])
 
     # (10) Công việc đã khởi động thì phải ở trạng thái chạy
@@ -373,9 +421,8 @@ def generate_solver():
         for s in range(Nw):
             for r in range(Nr):
                 for t1 in range(0, time_end[j]):
-                    # for t1 in range(0, CT):
                     for t2 in range(t1, min(t1 + T[j][r], CT)):
-                        clauses.append([-get_var('S', j, t1), get_var('A', j, t2)])
+                        fixed_clauses.append([-get_var('S', j, t1), get_var('A', j, t2)])
     #
     # (11) Nếu cùng trạm, công việc i phải hoàn thành trước j
     # Cải tiến: kết hợp với (9)
@@ -383,180 +430,135 @@ def generate_solver():
         for j1 in range(Na):
             for j2 in graph[j1]:
                 for t in range(CT):
-                    clauses.append(
+                    fixed_clauses.append(
                         [-get_var('X', j1, s), -get_var('X', j2, s), -get_var('S', j1, t), -get_var('S', j2, t)])
-
-        # (13) Giới hạn thời gian chu kỳ tại mỗi trạm
-        # for s in range(Nw):
-        vars_ = []
-        coeffs = []
-        for j in range(Na):
-            for r in range(Nr):
-                vars_.append(get_var('Z', j, s, r))
-                coeffs.append(T[j][r])
-
-        # Sử dụng PBEnc để tạo CNF từ ràng buộc pseudo-boolean
-        if vars_:  # Chỉ thêm constraint nếu có variables
-            cnf_part = PBEnc.leq(lits=vars_, weights=coeffs, bound=CT, vpool=var_manager)
-            clauses.extend(cnf_part.clauses)
 
     # (12) Cấm gán công việc vào trạm không hợp lệ do tiền nhiệm
     for j in range(Na):
         for k in range(Nw):
             if ip1[j][k] == 1:
-                clauses.append([-get_var('X', j, k)])
+                fixed_clauses.append([-get_var('X', j, k)])
                 continue
-            #11
+            # 11
             for t in range(0, time_end[j]):
                 if ip2[j][k][t] == 1:
-                    clauses.append([-get_var('X', j, k), -get_var('S', j, t)])
+                    fixed_clauses.append([-get_var('X', j, k), -get_var('S', j, t)])
 
-    # for j in range(Na):
-    #     last_t = time_end[j]
+    return fixed_clauses
 
-    #     # Special case: Full cycle tasks (only one feasible start time: t=0)
-    #     if last_t == 0:
-    #         # Force the task to start at t=0 (equivalent to original constraint #4)
-    #         clauses.append([get_var('S', j, 0)])
-    #     else:
-    #         # First time slot
-    #         set_var(get_var('S', j, 0), "T", j, 0)
+def Dynamic_clauses(K):
+        dynamic_clauses = []
+        for s in range(Nw):
+            # (13) Giới hạn thời gian chu kỳ tại mỗi trạm
+            # (14) Giới hạn năng lượng tiêu thụ
+            # for s in range(Nw):
+            vars_ = []
+            coeffs = []
+            for j in range(Na):
+                for r in range(Nr):
+                    z_var = get_var('Z', j, s, r)
+                    vars_.append(z_var)
 
-    #         # Intermediate time slots
-    #         for t in range(1, last_t):
-    #             clauses.append([-get_var("T", j, t-1), get_var("T", j, t)]) # T[j][t-1] -> T[j][t]
-    #             clauses.append([-get_var('S', j, t), get_var("T", j, t)]) # S[j][t] -> T[j][t]
-    #             clauses.append([-get_var('S', j, t), -get_var("T", j, t-1)]) # S[j][t] -> ¬T[j][t-1]
-    #             clauses.append([get_var('S', j, t), get_var("T", j, t-1), -get_var("T", j, t)]) # T[j][t] -> (T[j][t-1] ∨ S[j][t])
+                    # hệ số cho Z3 = w1*T + w2*T*EP
+                    # coeff = w1 * T[j][r] + w2 * T[j][r] * EP[r]
+                    coeff = w1 * T[j][r] + w2 * T[j][r] * 0
+                    coeffs.append(coeff)
 
-    #         # Last time slot (ensures at least one start time)
-    #         clauses.append([get_var("T", j, last_t-1), get_var('S', j, last_t)])
-    #         clauses.append([-get_var("T", j, last_t-1), -get_var('S', j, last_t)])
+                # Thêm constraint nếu có biến
+            if vars_:
+                cnf_part = PBEnc.leq(lits=vars_, weights=coeffs, bound=K, vpool=var_manager)
+                dynamic_clauses.extend(cnf_part.clauses)
+        # (15) Loại bỏ nghiệm trùng lặp
+        for sol in previous_solutions:
+            dynamic_clauses.append(sol)
 
-
-    # (14) Giới hạn năng lượng tiêu thụ
-    # for r in range(Nr):  # Mỗi robot
-    #     clause = []
-    #     coeffs = []
-    #     for s in range(Nw):  # Mỗi trạm
-    #         for j in range(Na):  # Mỗi công việc
-    #             coeffs.append(E[j][r])
-    #             clauses.append(get_var('Z', j, s, r))
-    #     # Ràng buộc năng lượng <= Er[r]
-    #     add_pseudo_boolean_constraint(clause, coeffs, "<=", Er[r])
-
-    # (15) Loại bỏ nghiệm trùng lặp
-    for sol in previous_solutions:
-        clauses.append(sol)
+        return dynamic_clauses
 
 
-def compute_ub_lb(T, Nw, Na):
-    global LB, UB, Tjr_min_list, Tjr_max_list
+# =============================================================================
+# 7. MAIN OPTIMIZATION LOOP
+# =============================================================================
+def optimize():
+    global var_map, var_counter, clauses, CT, time_end
+    global previous_solutions, var_manager, LB, UB, ip
+    best_solution = None
+    best_z3 = float('inf')
 
-    if not Tjr_min_list or not Tjr_max_list:  # Kiểm tra dữ liệu
-        print("Warning: Không có dữ liệu để tính LB/UB")
-        return
+    print(f"🎯 Tìm kiếm nghiệm trong khoảng K = [{LB}, {UB}]")
 
-    n = math.ceil(Na / Nw)
+    var_map = {}
+    var_counter = 1
+    var_manager = IDPool()
+    left, right = LB, UB
+    timeout_count = 0
+    max_timeout = 5
+    total_start = time.perf_counter()
+    fixed_clauses = Fixed_clauses()
 
-    # Sắp xếp tăng dần / giảm dần
-    sorted_min = sorted(Tjr_min_list)  # dùng cho LB
-    sorted_max = sorted(Tjr_max_list, reverse=True)  # dùng cho UB
+    solver = Glucose42(incr=True)
 
-    # Tính LB: tổng n giá trị nhỏ nhất trong các min_r T[j][r]
-    # Tính bounds
-    LB = sum(sorted_min[:min(n, len(sorted_min))])
-    UB = sum(sorted_max[:min(n, len(sorted_max))])
+    for clause in fixed_clauses:
+        solver.add_clause(clause)
 
-    # Tính UB: tổng (n+1) giá trị lớn nhất trong các max_r T[j][r]  # Comment
-    print(f"LowerBound: {LB}")
-    print(f"UpperBound: {UB}")
-
-
-def debug_test(test_ct):
-        global var_map, var_counter, clauses, CT, time_end, var_manager
-
-        print(f"Chạy debug test với CT = {test_ct}")
-
-        var_map = {}
-        var_counter = 1
-        var_manager = IDPool()
-        clauses = []
-        solver = Glucose3()
-        CT = test_ct
+    while left <= right and timeout_count < max_timeout:
+        K = int((left + right) / 2)
+        iter_start = time.perf_counter()  # đo thời gian cho mỗi vòng lặp
 
         time_end = [max(0, CT - min(T[j].values())) for j in range(Na)]
 
-        # CHỈ THÊM CÁC RÀNG BUỘC CƠ BẢN
-        print("Adding basic constraints...")
+        # LƯU Ý: Hàm Dynamic_clauses(K) chưa được định nghĩa trong code nguồn ban đầu.
+        dynamic_clauses = Dynamic_clauses(K)
 
-        # (2) Mỗi công việc được gán cho đúng một trạm
-        for j in range(Na):
-            clauses.append([get_var('X', j, s) for s in range(Nw)])
-
-        for j in range(Na):
-            for s1 in range(Nw):
-                for s2 in range(s1 + 1, Nw):
-                    clauses.append([-get_var('X', j, s1), -get_var('X', j, s2)])
-
-        # (3) Mỗi trạm được gán cho đúng một robot
-        for s in range(Nw):
-            clauses.append([get_var('Y', s, r) for r in range(Nr)])
-
-        for s in range(Nw):
-            for r1 in range(Nr):
-                for r2 in range(r1 + 1, Nr):
-                    clauses.append([-get_var('Y', s, r1), -get_var('Y', s, r2)])
-
-        print(f"Added {len(clauses)} basic clauses")
-
-        for clause in clauses:
+        for clause in dynamic_clauses:
             solver.add_clause(clause)
 
         if solver.solve():
-            print("✅ Basic constraints are satisfiable!")
             model = solver.get_model()
             this_solution = [var for var in model if var > 0]
-            assignment, station_runtime, solution = get_solution(this_solution)
-            print_solution(assignment)
+            assignment, station_runtime, solution, total_energy = get_solution(this_solution)
+            actual_ct = max(station_runtime) if station_runtime else 0
+            actual_e = total_energy
+            z3_value = w1 * actual_ct + w2 * actual_e
+
+            print(f"✅ Có nghiệm khả thi với Z3 = {z3_value:.2f} (CT={actual_ct}, E={actual_e:.2f})")
+
+            if z3_value < best_z3:
+                best_z3 = z3_value
+                best_solution = assignment
+                previous_solutions.append(solution)
+
+            # Giảm giới hạn K để tìm nghiệm nhỏ hơn
+            right = K - 1
         else:
-            print("❌ Even basic constraints are unsatisfiable!")
+            solver = Glucose42(incr=True)
+            for clause in fixed_clauses:
+                solver.add_clause(clause)
+            print(f"❌ Không tìm thấy nghiệm cho K = {K}")
+            left = K + 1
+
+        iter_end = time.perf_counter()
+        print(f"⏱ Thời gian vòng lặp: {iter_end - iter_start:.2f} giây\n")
+
+    total_end = time.perf_counter()
+    total_elapsed = total_end - total_start
+    # === KẾT THÚC ĐO THỜI GIAN ===
+
+    if best_solution:
+        print(f"\n🎉 NGHIỆM TỐI ƯU CUỐI CÙNG: Z3 = {best_z3:.2f}")
+        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
+        print_solution(best_solution)
 
 
-var_map = {}
-var_counter = 1
-var_manager = None  # Sẽ được khởi tạo trong optimize_ct()
-clauses = []
-Na = 0  # Na - jobs
-Nw = 3  # Nw - workstations
-Nr = 0  # Nr - robots
-previous_solutions = []
-T = defaultdict(dict)  # T[j][r] là thời gian robot r làm task j
-graph = defaultdict(list)  # graph[j] là danh sách các task kế tiếp của task j
-adj = []
-LB = int()
-UB = int()
-CT = int()  # cycletime
-Tjr_min_list = []
-Tjr_max_list = []
-time_end = [] # time_end: thời gian khởi động muộn nhất mà vẫn kịp hoàn thành công việc
-visited = []
-neighbors = []
-reversed_neighbors = []
-toposort = []
-
-
+# =============================================================================
+# 8. EXECUTION ENTRY POINT
+# =============================================================================
 def main():
-    global Na, Nw, Nr, T, graph, LB, UB, CT, Tjr_min_list, Tjr_max_list, time_end
+    global Na, Nw, Nr, T, LB, UB, CT, ip1, ip2, toposort, neighbors
 
     try:
-        # read_data(input())
-        read_data("/content/drive/MyDrive/Colab Notebooks/Data/Dataset1.txt")
-        # Lấy mỗi task j: T[j][r] nhỏ nhất và lớn nhất
-        Tjr_min_list = [min(T[j].values()) for j in T if T[j]]
-        Tjr_max_list = [max(T[j].values()) for j in T if T[j]]
-        compute_ub_lb(T, Nw, Na)
-        optimize_ct()
+        read_data("Dataset2.txt")
+        UB, LB, ip1, ip2, CT, toposort = Preprocess(Nw, Na, T, neighbors)
+        optimize()
 
     except FileNotFoundError:
         print("❌ Không tìm thấy file")

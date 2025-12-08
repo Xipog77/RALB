@@ -1,0 +1,19 @@
+Báo cáo tháng 11
+
+- So sánh sử dụng giữa các phiên bản Sat Solver:
+    + Glucose 3: Thời gian chạy là 23.15s cho kịch bản Dataset1, 788.83s cho kịch bản Dataseet2
+    + Glucose 4: Thời gian chạy là 21.71s cho kịch bản Dataset1,   827.44s cho kịch bản Dataseet2
+    + Glucose 42: Thời gian chạy là 22.83s cho kịch bản Dataset1, 826.03s cho kịch bản Dataseet2
+    + Cadical153: Thời gian chạy là 69.10s cho kịch bản Dataset1, time-out cho kịch bản Dataseet2
+
+
+
+- Nghiên cứu các cách tính LB-UB mới như: Beam Search, Sandwich Strategy...
+Tuy nhiên các hàm theo phương pháp tính mới đều cho ra kết quả lỗi hoặc không đủ tốt
+
+Chọn ra hàm ước tính mới
+    -New_UB: Tổng thời gian của chuỗi precedence constraints dài nhất. Tuy nhiên cách này chỉ nên áp dũng trong trường hợp tỉ lệ task/station của bài toán cao, còn không thì vẫn nên áp dụng cách tính LB cũ để đảm bảo khả năng giải được
+    -New_LB: Không thể phân phối một lượng khối lượng lớn hơn khả năng chứa của số trạm (workers) trong bất kỳ nhóm k task nào. Đây là cận cơ bản trong lý thuyết multiprocessor scheduling (Graham’s bounds).
+
+- Cái tiến thêm cơ chế Incremental SAT kết hợp Assumption và áp dụng New_UB, New_LB:
+    + Glucose 42: Thời gian chạy là 8.41s cho kịch bản Dataset1, 620.18 cho kịch bản Dataset2
