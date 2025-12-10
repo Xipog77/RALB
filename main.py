@@ -183,7 +183,7 @@ def Preprocess(Nw, Na, T, neighbors):
         S_k = prefix[k]
         m = (k + Nw - 1) // Nw  # ceil(k / Nw)
         LB3_k = S_k / m
-        LB = max(LB, LB3_k)
+        LB = int(max(LB, LB3_k))
 
     # ================================================
     # PHẦN 3: TOPOLOGICAL SORT & UB (Critical Path Logic)
@@ -543,75 +543,6 @@ def optimize():
         print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
         print_solution(best_solution)
 
-def optimize():
-    global var_map, var_counter, clauses, CT, time_end
-    global previous_solutions, var_manager, LB, UB, ip
-    best_solution = None
-    best_z3 = float('inf')
-
-    print(f"🎯 Tìm kiếm nghiệm trong khoảng K = [{LB}, {UB}]")
-
-    var_map = {}
-    var_counter = 1
-    var_manager = IDPool()
-    left, right = LB, UB
-    timeout_count = 0
-    max_timeout = 5
-    total_start = time.perf_counter()
-    fixed_clauses = Fixed_clauses()
-
-    solver = Glucose42(incr=True)
-
-    for clause in fixed_clauses:
-        solver.add_clause(clause)
-
-    while left <= right and timeout_count < max_timeout:
-        K = int((left + right) / 2)
-        iter_start = time.perf_counter()  # đo thời gian cho mỗi vòng lặp
-
-        time_end = [max(0, CT - min(T[j].values())) for j in range(Na)]
-
-        # LƯU Ý: Hàm Dynamic_clauses(K) chưa được định nghĩa trong code nguồn ban đầu.
-        dynamic_clauses = Dynamic_clauses(K)
-
-        for clause in dynamic_clauses:
-            solver.add_clause(clause)
-
-        if solver.solve():
-            model = solver.get_model()
-            this_solution = [var for var in model if var > 0]
-            assignment, station_runtime, solution, total_energy = get_solution(this_solution)
-            actual_ct = max(station_runtime) if station_runtime else 0
-            actual_e = total_energy
-            z3_value = w1 * actual_ct + w2 * actual_e
-
-            print(f"✅ Có nghiệm khả thi với Z3 = {z3_value:.2f} (CT={actual_ct}, E={actual_e:.2f})")
-
-            if z3_value < best_z3:
-                best_z3 = z3_value
-                best_solution = assignment
-                previous_solutions.append(solution)
-
-            # Giảm giới hạn K để tìm nghiệm nhỏ hơn
-            right = K - 1
-        else:
-            solver = Glucose42(incr=True)
-            for clause in fixed_clauses:
-                solver.add_clause(clause)
-            print(f"❌ Không tìm thấy nghiệm cho K = {K}")
-            left = K + 1
-
-        iter_end = time.perf_counter()
-        print(f"⏱ Thời gian vòng lặp: {iter_end - iter_start:.2f} giây\n")
-
-    total_end = time.perf_counter()
-    total_elapsed = total_end - total_start
-    # === KẾT THÚC ĐO THỜI GIAN ===
-
-    if best_solution:
-        print(f"\n🎉 NGHIỆM TỐI ƯU CUỐI CÙNG: Z3 = {best_z3:.2f}")
-        print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
-        print_solution(best_solution)
 
 
 # =============================================================================

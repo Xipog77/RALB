@@ -97,7 +97,7 @@ def build_model(w1, w2):
 
     return solver, X, Y, Z, CT, Er
 
-read_data("Dataset1.txt")
+read_data("Dataset2.txt")
 solver, X, Y, Z, CT, Er = build_model(1, 0)
 
 status = solver.Solve()
