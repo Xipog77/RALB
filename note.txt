@@ -1,5 +1,0 @@
-12/11/25
-- Tìm UB theo phương pháp chạy fixed clause nhiều lần
-- Tìm hiểu về INC SAT
-    solve(assumption(clause(Dynamic_clause))
-   - Sử dụng glucose 4.2

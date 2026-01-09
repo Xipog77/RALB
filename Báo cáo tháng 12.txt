@@ -1,0 +1,22 @@
+- Trình bày lại cách ước tính LB-UB:
+    + New_UB: Được xác định bằng cách lấy tổng thời gian xử lý của chuỗi precedence dài nhất
+    + New_LB: Được ước lượng dựa trên nguyên tắc phân bố đều, bằng cách lấy tổng thời gian tối thiểu của các task chia cho số trạm.
+Hai cách tính mới này đều cho ra một ước lượng LB-UB có giới hạn chặt hơn. Tuy nhiên, về mặt logic thì đây chỉ là các cách ước lượng và hoàn toàn có thể sai trong vài trường hợp
+
+- Tách công thức F0 không phụ thuộc vào CT, giải SAT 10 lần tìm UBbest:
+    + Đã thử các kịch bản khác nhau: có/ không có ước lượng tham số ip1 ip2, giải 10/20 lần
+    + Điểm chung, đều trả về giá trị ước lượng CT rời rạc ở khoảng rất lớn, lớn hơn giá trị các hàm ước tính đã có => không phủ hợp
+
+- Thử nghiệm sử dụng Cadical195: Cadical195 không hỗ trợ incrementSat, áp dụng phương pháp cũ là binary search và vòng lặp: kết quả vẫn chậm hơn Glucose42
+
+- Thử nghiệm sử dụng MaxSAT: Kết quả tốt hơn rõ rệt 1.6753s cho kịch bản Dataset1 (Glucose42 sử dụng INC: 8.41s), 17.3473s cho kịch bản Dataset2 (Glucose42 sử dụng INC: 81.6s)
+    + Sử dụng wcnf MaxSAT Solver RC2
+    + Hard Clause: Là các hàm Fixed clauses cũ với trọng số 0 -> Bắt buộc phải thỏa mãn trong wcnf
+    + Soft Clauses (Weighted MaxSAT): quy định tại Zjsr, nếu Zjsr = 1 -> bị phạt, trả phí bằng trọng số w2 * thời gian T[j][r] => Sẽ luôn ưu tiên chọn robot có thời gian ngắn nhất để tổng weight soft clause vi phạm nhỏ nhất
+    + Dynamic_clauses: biểu diễn ràng buộc Cycle Time ≤ K dưới dạng pseudo-Boolean hard constraints, được cập nhật trong mỗi bước của quá trình binary search để tìm giá trị Cycle Time tối ưu.
+    + Đang thử nghiệm rút gọn bỏ các hàm liên quan đến biến s và a
+
+- Thử nghiệm sử dụng painless:
+    + Đang tiến hành cài đặt thử trên môi trường Google Colab
+    + Kết quả thử nghiệm khả quan, tốc độ nhanh hơn MaxSAT trong đa số lần chạy
+    + Cần tinh chỉnh lại và tối ưu một vài điểm trong code

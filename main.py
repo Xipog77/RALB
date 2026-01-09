@@ -524,7 +524,7 @@ def optimize():
                 solver.add_clause(solution_blocking)
 
             # Giảm giới hạn K để tìm nghiệm nhỏ hơn
-            right = K - 1
+            right = min(K - 1, z3_value - 1)
         else:
             # Không tìm thấy nghiệm với assumption selector -> K không thỏa mãn
             # Không cần reset solver, chỉ cần không assume selector này nữa là xong.
@@ -543,8 +543,6 @@ def optimize():
         print(f"⏳ Tổng thời gian chạy: {total_elapsed:.2f} giây")
         print_solution(best_solution)
 
-
-
 # =============================================================================
 # 8. EXECUTION ENTRY POINT
 # =============================================================================
@@ -552,7 +550,7 @@ def main():
     global Na, Nw, Nr, T, LB, UB, CT, ip1, ip2, toposort, neighbors
 
     try:
-        read_data("Dataset2.txt")
+        read_data("Dataset1.txt")
         UB, LB, ip1, ip2, CT, toposort = Preprocess(Nw, Na, T, neighbors)
         optimize()
 
