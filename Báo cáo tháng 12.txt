@@ -1,3 +1,5 @@
+Báo cáo tháng 12
+
 - Trình bày lại cách ước tính LB-UB:
     + New_UB: Được xác định bằng cách lấy tổng thời gian xử lý của chuỗi precedence dài nhất
     + New_LB: Được ước lượng dựa trên nguyên tắc phân bố đều, bằng cách lấy tổng thời gian tối thiểu của các task chia cho số trạm.

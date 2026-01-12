@@ -1,0 +1,72 @@
+BÁO CÁO TÔNG HỢP
+
+Đề tài nghiên cứu: Giới thiệu phương pháp giải thuật cho bài toán Tối ưu dây chuyền sản xuất có Robot, Robotic Assembly Line Balancing
+
+Dựa trên bài báo: Optimization of time and energy in straight one-sided robotic assembly lines
+
+Tổng quan: Bài nghiên cứu áp dụng phương pháp SAT cho bài toán Tối ưu chu kỳ dây chuyền sản xuất có Robot (RALB-II) và Tối ưu đa mục tiêu cả chu kỳ lẫn năng lượng
+Trong khuôn khổ thử nghiệm, sẽ thực hiện theo tối ưu đơn mục tiêu CT vì giới hạn bộ đề, phương pháp đa mục tiêu đã phát triển xong và thử nghiệm thành công
+
+Phương pháp:
+- Công nghệ:
+- Quy trình: (Viết kỹ, mô tả lại Code)
+    + Khởi tạo bộ tham số, cách ước lượng
+    + Giải thuật, Công thức SAT áp dụng
+
+
+Quá trình phát triển:
+- Từ bài báo gốc, nhóm nghiên cứu đã liên tục cài đặt và cải tiến các phiên bản (Như trên tài liệu cung cấp)
+- Nhóm nghiên cứu đã hoàn thiện chương trình chạy tối ưu nhất thời điểm hiện tại có so sánh thời gian giải thuật gần tiệm cận đến phương pháp ILP.
+
+Hướng nghiên cứu trong tương lai:
+- Nhóm nghiên cứu sẽ tiếp tục nghiên cứu và cải thiện thêm khả năng tính toán trong tương lai
+
+Thực hiện chạy thử nghiệm trên hai bài toán nhỏ là Dataset1 và Dataset2 cho ra kết quả giống như MIP nhưng với thời gian chạy tương đối chậm
+
+Thực hiện chạy thử nghiệm theo đề bài của borba-ritt-2018 trên môi trường Google Colab, triển khai trong vòng 30p với time-out 60s cho mỗi bài
+
+Nhận xét: Phương pháp SAT là một phương pháp thú vị, tuy nhiên không phù hợp với việc giải cho một bài toán quá lớn vì số lượng mệnh đề quá lớn sẽ dẫn đến tràn RAM
+
+Kết quả của MIP
+
+Đang giải nén: borba-ritt-2018.zip vào thư mục 'dataset_extracted'...
+
+Tìm thấy 840 file dữ liệu.
+Giới hạn thời gian: 30 phút (Max 60s/bài).
+------------------------------------------------------------
+Solving 100_BN_2_bimodal_1_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 16495.0
+Solving 100_BN_2_bimodal_1_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 46202.0
+Solving 100_BN_2_bimodal_1_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 23932.0
+Solving 100_BN_2_bimodal_1_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 45401.0
+Solving 100_BN_2_bimodal_2_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 13794.0
+Solving 100_BN_2_bimodal_2_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 27186.0
+Solving 100_BN_2_bimodal_2_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 14452.0
+Solving 100_BN_2_bimodal_2_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 24964.0
+Solving 100_BN_2_bimodal_3_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 14959.0
+Solving 100_BN_2_bimodal_3_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 27761.0
+Solving 100_BN_2_bimodal_3_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 21331.0
+Solving 100_BN_2_bimodal_3_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 41261.0
+Solving 100_BN_2_bimodal_4_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 19147.0
+Solving 100_BN_2_bimodal_4_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 13084.0
+Solving 100_BN_2_bimodal_4_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 19011.0
+Solving 100_BN_2_bimodal_4_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 42469.0
+Solving 100_BN_2_bimodal_5_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 10807.0
+Solving 100_BN_2_bimodal_5_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 32903.0
+Solving 100_BN_2_bimodal_5_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 23505.0
+Solving 100_BN_2_bimodal_5_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 41519.0
+Cảnh báo: Dữ liệu thời gian (1386) không chia hết cho số task (100).
+Solving 100_BN_2_bottom_1_14_2.alb (Tasks=100, Robots=1)... OPTIMAL: CT = 27008.0
+Solving 100_BN_2_bottom_1_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 19787.0
+Cảnh báo: Dữ liệu thời gian (2476) không chia hết cho số task (100).
+Solving 100_BN_2_bottom_1_25_2.alb (Tasks=100, Robots=1)... OPTIMAL: CT = 24832.0
+Solving 100_BN_2_bottom_1_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 21841.0
+Solving 100_BN_2_bottom_2_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 6525.0
+Solving 100_BN_2_bottom_2_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 19572.0
+Solving 100_BN_2_bottom_2_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 10471.0
+Solving 100_BN_2_bottom_2_25_5.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 20459.0
+Solving 100_BN_2_bottom_3_14_2.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 3720.0
+Solving 100_BN_2_bottom_3_14_5.alb (Tasks=100, Robots=14)... FEASIBLE: CT = 25047.0
+Solving 100_BN_2_bottom_3_25_2.alb (Tasks=100, Robots=25)... FEASIBLE: CT = 13741.0
+ĐÃ HẾT THỜI GIAN TOÀN BỘ CHƯƠNG TRÌNH.
+
+Kết quả của SAT

@@ -1,388 +1,303 @@
-# Maxsat
-import time
+import sys
 import math
 import csv
-from collections import defaultdict, deque
-from pysat.pb import PBEnc
+import time
+from collections import deque
+from pysat.solvers import Solver
 from pysat.formula import IDPool, WCNF
-from pysat.examples.rc2 import RC2  # Import MaxSAT Solver
+from pysat.card import CardEnc
+from pysat.pb import PBEnc
+from pysat.examples.rc2 import RC2  # Solver MaxSAT mạnh nhất của PySAT
+
 
 # =============================================================================
-# 1. PARAMETERS & GLOBALS
+# 1. DATA PROCESSING
 # =============================================================================
-Na = 0
-Nw = 3
-Nr = 0
-w1 = 1
-w2 = 1
-LB = int()
-UB = int()
-CT = int()
+class ProblemData:
+    def __init__(self, filepath, num_stations=3):
+        self.Na = 0
+        self.Nr = 0
+        self.Nw = num_stations
+        self.T = []
+        self.adj = []
+        self.neighbors = []
+        self.LB = 0
+        self.UB = 0
+        self.T_min = []
+        self._read_data(filepath)
+        self._calculate_bounds()
 
-var_map = {}
-var_counter = 1
-var_manager = None
-clauses = []
+    def _read_data(self, filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                self.Na = sum(1 for _ in f) - 1
+            self.T = [{} for _ in range(self.Na)]
+            self.adj = [[] for _ in range(self.Na)]
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f, delimiter='\t')
+                robot_cols = [c for c in reader.fieldnames if c.lower().startswith("robot")]
+                self.Nr = len(robot_cols)
+                for row in reader:
+                    task = int(row['Task']) - 1
+                    succ_str = row['Successor'].strip()
+                    if succ_str:
+                        for s in succ_str.split(','):
+                            succ = int(s.strip()) - 1
+                            self.adj[task].append(succ)
+                    for r_idx, col in enumerate(robot_cols):
+                        self.T[task][r_idx] = int(row[col])
+        except Exception:
+            sys.exit(1)
 
-T = defaultdict(dict)
-graph = defaultdict(list)
-adj = []
-EP = defaultdict(dict)
-time_end = []
-neighbors = []
-reversed_neighbors = []
-toposort = []
-ip1 = []
-ip2 = []
-
-# =============================================================================
-# 2. HELPER FUNCTIONS
-# =============================================================================
-def get_var(name, *args):
-    global var_manager
-    key = (name,) + args
-    if key not in var_map:
-        var_map[key] = var_manager.id()
-    return var_map[key]
-
-def set_var(var, name, *args):
-    key = (name,) + args
-    if key not in var_map:
-        var_map[key] = var
-    return var_map[key]
-
-def get_key(value):
-    for key, val in var_map.items():
-        if val == value:
-            return key
-    return None
-
-# =============================================================================
-# 3. INPUT / OUTPUT
-# =============================================================================
-def read_data(file_path):
-    global T, graph, Na, Nr, adj, neighbors, reversed_neighbors
-    T.clear()
-    graph.clear()
-    adj.clear()
-
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            Na = sum(1 for _ in f) - 1
-    except FileNotFoundError:
-        print(f"Lỗi: Không tìm thấy file '{file_path}'")
-        exit()
-
-    neighbors = [[0 for i in range(Na)] for j in range(Na)]
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f, delimiter='\t')
-        robot_cols = [col for col in reader.fieldnames if col.lower().startswith("robot")]
-        Nr_detected = len(robot_cols)
-
-        for row in reader:
-            task = int(row['Task']) - 1
-            # Xử lý Successor
-            succ_str = row['Successor'].strip()
-            if succ_str:
-                successors = [int(s.strip()) - 1 for s in succ_str.split(',')]
-                for succ in successors:
-                    adj.append((task, succ))
-                    neighbors[task][succ] = 1
-                graph[task] = successors
-            else:
-                graph[task] = []
-
-            for r_index, col_name in enumerate(robot_cols):
-                T[task][r_index] = int(row[col_name])
-
-    Nr = Nr_detected
-    print(f"✅ Đọc dữ liệu: Tasks={Na}, Robots={Nr}")
-
-def print_solution(assignment):
-    print("\n" + "="*30)
-    print("KẾT QUẢ PHÂN CÔNG (MAXSAT)")
-    print("="*30)
-    station_runtime = [0 for _ in range(Nw)]
-    total_processing_time = 0
-
-    # Sắp xếp theo trạm để dễ nhìn
-    schedule = defaultdict(list)
-
-    for j in range(Na):
-        s = assignment[j]['station']
-        r = assignment[j]['robot']
-        if s != -1 and r != -1:
-            schedule[s].append((j, r, T[j][r]))
-            station_runtime[s] += T[j][r]
-            total_processing_time += T[j][r]
-
-    for s in range(Nw):
-        print(f"\n--- Trạm {s + 1} (Tổng thời gian: {station_runtime[s]}) ---")
-        for (job, robot, time_val) in schedule[s]:
-            print(f"  Task {job + 1:02d} | Robot {robot + 1} | Time: {time_val}")
-
-    ct_result = max(station_runtime) if station_runtime else 0
-    print("-" * 30)
-    print(f"🎯 Cycle Time (MakeSpan): {ct_result}")
-    print(f"⚡ Tổng thời gian chạy (Objective Soft): {total_processing_time}")
-
-def get_solution(model):
-    assignment = defaultdict(lambda: {'station': -1, 'robot': -1})
-    if model is None:
-        return assignment, [], 0, 0
-
-    for var in model:
-        # Trong RC2 model có thể chứa số âm, ta chỉ quan tâm số dương
-        if var > 0:
-            key = get_key(var)
-            if not key: continue
-
-            if key[0] == 'X':
-                assignment[key[1]]['station'] = key[2]
-            elif key[0] == 'Y':
-                # Logic cũ của bạn: Y_sr gán robot r cho trạm s
-                # Cần map lại vào task
-                pass
-            elif key[0] == 'Z': # Biến Z_jsr: Task j ở trạm s do robot r làm
-                j, s, r = key[1], key[2], key[3]
-                assignment[j]['station'] = s
-                assignment[j]['robot'] = r
-
-    station_runtime = [0] * Nw
-    total_energy = 0
-    for j in range(Na):
-        s = assignment[j]['station']
-        r = assignment[j]['robot']
-        if s != -1 and r != -1:
-            station_runtime[s] += T[j][r]
-            total_energy += T[j][r] # Giả sử energy ~ time nếu không có bảng EP
-
-    return assignment, station_runtime, [], total_energy
-
-# =============================================================================
-# 4. PREPROCESSING
-# =============================================================================
-def Preprocess(Nw, Na, T, neighbors):
-    T_min = []
-    time_list = [0] * Na
-    for j in range(Na):
-        val = min(T[j].values()) if T[j] else 0
-        T_min.append(val)
-        time_list[j] = val
-
-    # Tính LB
-    p = sorted(T_min, reverse=True)
-    prefix = [0]
-    for x in p: prefix.append(prefix[-1] + x)
-    LB = 0
-    for k in range(1, len(p) + 1):
-        LB = max(LB, int(math.ceil(prefix[k] / ((k + Nw - 1) // Nw)))) # Sửa logic chia một chút
-
-    # Tính UB & Topo
-    indeg = [0] * Na
-    for u in range(Na):
-        for v in range(Na):
-            if neighbors[u][v]: indeg[v] += 1
-
-    q = deque([i for i in range(Na) if indeg[i] == 0])
-    toposort_list = []
-    dist = [0] * Na
-
-    while q:
-        u = q.popleft()
-        toposort_list.append(u)
-        finish_u = dist[u] + T_min[u]
-        for v in range(Na):
-            if neighbors[u][v]:
+    def _calculate_bounds(self):
+        self.T_min = [min(self.T[j].values()) if self.T[j] else 0 for j in range(self.Na)]
+        p = sorted(self.T_min, reverse=True)
+        prefix = [0]
+        for x in p: prefix.append(prefix[-1] + x)
+        calc_lb = 0
+        for k in range(1, len(p) + 1):
+            val = math.ceil(prefix[k] / ((k + self.Nw - 1) // self.Nw))
+            calc_lb = max(calc_lb, int(val))
+        self.LB = calc_lb
+        indeg = [0] * self.Na
+        for u in range(self.Na):
+            for v in self.adj[u]: indeg[v] += 1
+        q = deque([i for i in range(self.Na) if indeg[i] == 0])
+        dist = [0] * self.Na
+        while q:
+            u = q.popleft()
+            finish_u = dist[u] + self.T_min[u]
+            for v in self.adj[u]:
                 dist[v] = max(dist[v], finish_u)
                 indeg[v] -= 1
                 if indeg[v] == 0: q.append(v)
+        max_dist = max([dist[i] + self.T_min[i] for i in range(self.Na)]) if self.Na else 0
+        self.UB = max(int(math.ceil(max_dist)), self.LB)
 
-    max_dist = 0
-    for i in range(Na):
-        max_dist = max(max_dist, dist[i] + T_min[i])
-    UB = max_dist
-    CT = int(math.ceil(UB))
-
-    # IP1, IP2 Matrix
-    earliest_start = [[-1] * Nw for _ in range(Na)] # Simplified logic for brevity in example
-    # (Giữ nguyên logic IP1/IP2 phức tạp của bạn ở code gốc nếu cần chính xác tuyệt đối)
-    # Ở đây mình khởi tạo dummy để code chạy được focus vào MaxSAT
-    ip1 = [[1 for _ in range(Nw)] for _ in range(Na)]
-    ip2 = [[[1 for _ in range(CT + 1)] for _ in range(Nw)] for _ in range(Na)]
-
-    return UB, int(LB), ip1, ip2, CT, toposort_list
 
 # =============================================================================
-# 5. CLAUSE GENERATION
+# 2. PHASE 1: FAST BINARY SEARCH (Tìm CT nhỏ nhất)
 # =============================================================================
-def Fixed_clauses():
-    # Hard Clauses: BẮT BUỘC phải thỏa mãn
-    fixed_clauses = []
+class Phase1Scheduler:
+    def __init__(self, data):
+        self.data = data
+        self.vpool = IDPool()
+        # Sửa: Bỏ tham số incremental=True để tránh lỗi
+        self.solver = Solver(name='glucose4')
+        self.X = [[self.vpool.id(f'X_{j}_{s}') for s in range(data.Nw)] for j in range(data.Na)]
+        self.Y = [[self.vpool.id(f'Y_{s}_{r}') for r in range(data.Nr)] for s in range(data.Nw)]
+        self.Z = {}
+        self._build_static_model()
 
-    # 1. Mỗi task gán vào đúng 1 trạm
-    for j in range(Na):
-        vars_ = [get_var('X', j, s) for s in range(Nw)]
-        fixed_clauses.append(vars_) # At least one
-        for i in range(len(vars_)):
-            for k in range(i+1, len(vars_)):
-                fixed_clauses.append([-vars_[i], -vars_[k]]) # At most one
+    def _get_z(self, j, s, r):
+        if (j, s, r) not in self.Z:
+            z = self.vpool.id(f'Z_{j}_{s}_{r}')
+            self.Z[(j, s, r)] = z
+            x, y = self.X[j][s], self.Y[s][r]
+            self.solver.add_clause([-z, x])
+            self.solver.add_clause([-z, y])
+            self.solver.add_clause([-x, -y, z])
+        return self.Z[(j, s, r)]
 
-    # 2. Ràng buộc thứ tự (Precedence)
-    # Nếu i -> j thì trạm(i) <= trạm(j)
-    for (i, j) in adj:
-        for s_i in range(Nw):
-            for s_j in range(s_i): # Nếu s_j < s_i (sai thứ tự)
-                fixed_clauses.append([-get_var('X', i, s_i), -get_var('X', j, s_j)])
+    def _build_static_model(self):
+        for j in range(self.data.Na):
+            for c in CardEnc.equals(self.X[j], 1, vpool=self.vpool).clauses: self.solver.add_clause(c)
+        for s in range(self.data.Nw):
+            for c in CardEnc.equals(self.Y[s], 1, vpool=self.vpool).clauses: self.solver.add_clause(c)
+        for u in range(self.data.Na):
+            for v in self.data.adj[u]:
+                for s_u in range(self.data.Nw):
+                    for s_v in range(s_u): self.solver.add_clause([-self.X[u][s_u], -self.X[v][s_v]])
+        for j in range(self.data.Na):
+            for s in range(self.data.Nw):
+                for r in range(self.data.Nr): self._get_z(j, s, r)
 
-    # 3. Liên kết X (Task-Trạm), Y (Trạm-Robot) -> Z (Task-Trạm-Robot)
-    # Z_jsr <-> X_js AND Y_sr (Mỗi trạm có 1 robot, task ở trạm đó phải dùng robot đó)
+    def find_min_cycle_time(self):
+        low, high = self.data.LB, self.data.UB
+        best_K = -1
 
-    # Ràng buộc: Mỗi trạm có ĐÚNG 1 Robot
-    for s in range(Nw):
-        vars_ = [get_var('Y', s, r) for r in range(Nr)]
-        fixed_clauses.append(vars_)
-        for r1 in range(Nr):
-            for r2 in range(r1+1, Nr):
-                fixed_clauses.append([-get_var('Y', s, r1), -get_var('Y', s, r2)])
+        while low <= high:
+            mid = (low + high) // 2
+            selector = self.vpool.id(f'SEL_{mid}')
 
-    # Định nghĩa Z_jsr
-    for j in range(Na):
-        for s in range(Nw):
-            for r in range(Nr):
-                z = get_var('Z', j, s, r)
-                x = get_var('X', j, s)
-                y = get_var('Y', s, r)
-                # Z -> X
-                fixed_clauses.append([-z, x])
-                # Z -> Y
-                fixed_clauses.append([-z, y])
-                # X and Y -> Z
-                fixed_clauses.append([-x, -y, z])
+            # Thêm ràng buộc Cycle Time <= mid với selector
+            for s in range(self.data.Nw):
+                lits, weights = [], []
+                for j in range(self.data.Na):
+                    for r in range(self.data.Nr):
+                        t = self.data.T[j][r]
+                        if t > 0:
+                            lits.append(self.Z[(j, s, r)])
+                            weights.append(t)
+                if lits:
+                    cnf = PBEnc.leq(lits, weights, mid, vpool=self.vpool)
+                    for c in cnf.clauses: self.solver.add_clause([-selector] + c)
 
-    return fixed_clauses
-
-def Generate_Soft_Clauses():
-    # SOFT CLAUSES: Mong muốn tối ưu hóa
-    # Mục tiêu: Giảm thiểu tổng thời gian thực hiện (Total Runtime)
-    # Nếu chọn Z_jsr, ta bị phạt một trọng số = T[j][r]
-
-    soft_clauses = []
-    weights = []
-
-    for j in range(Na):
-        for s in range(Nw):
-            for r in range(Nr):
-                # Nếu buộc phải dùng (để thỏa mãn Hard Clause), ta phải trả phí weight
-                clause = [-get_var('Z', j, s, r)]
-                weight = T[j][r] * w2 # Nhân trọng số w2 (Energy/Time preference)
-
-                if weight > 0:
-                    soft_clauses.append(clause)
-                    weights.append(weight)
-
-    return soft_clauses, weights
-
-def Dynamic_clauses_PB(K):
-    clauses = []
-    for s in range(Nw):
-        lits = []
-        coeffs = []
-        for j in range(Na):
-            for r in range(Nr):
-                lits.append(get_var('Z', j, s, r))
-                coeffs.append(T[j][r])
-
-        if lits:
-            cnf = PBEnc.leq(lits=lits, weights=coeffs, bound=K, vpool=var_manager)
-            clauses.extend(cnf.clauses)
-    return clauses
-
-# =============================================================================
-# 6. MAXSAT OPTIMIZATION LOOP
-# =============================================================================
-def optimize_maxsat():
-    global var_manager, LB, UB, ip1, ip2, Na
-
-    print(f"🚀 Bắt đầu tối ưu hóa MAXSAT trong khoảng K = [{LB}, {UB}]")
-
-    var_manager = IDPool()
-    best_solution = None
-    best_total_cost = float('inf')
-
-    # 1. Tạo đối tượng WCNF (Weighted CNF)
-    # Đây là định dạng chuẩn cho MaxSAT
-    wcnf = WCNF()
-
-    # 2. Thêm Hard Clauses (Trọng số = Top/Infinity)
-    # Các ràng buộc này không bao giờ được vi phạm
-    h_clauses = Fixed_clauses()
-    for c in h_clauses:
-        wcnf.append(c) # Mặc định weight=None nghĩa là Hard clause trong pysat
-
-    # 3. Thêm Soft Clauses (Mục tiêu phụ: Minimize Total Runtime/Energy)
-    # Ngay cả khi Cycle Time thỏa mãn, ta muốn chọn phương án Robot làm nhanh nhất
-    s_clauses, s_weights = Generate_Soft_Clauses()
-    for c, w in zip(s_clauses, s_weights):
-        wcnf.append(c, weight=w)
-
-    start_time = time.perf_counter()
-
-    # 4. Binary Search cho Cycle Time (K)
-    # Vì K là ràng buộc cứng "Min-Max", Binary Search hiệu quả hơn biến nó thành Soft Clause
-    low, high = LB, UB
-    final_K = UB
-
-    while low <= high:
-        K = (low + high) // 2
-        print(f"🔎 Checking Cycle Time K = {K} ... ", end="")
-
-        # Tạo một bản sao WCNF hoặc dùng cơ chế assumption (RC2 hỗ trợ tốt nhất là thêm hard clause tạm thời)
-        # Tuy nhiên để đơn giản, ta sẽ tạo instance RC2 mới cho mỗi K với hard constraint mới
-
-        # Lấy ràng buộc PB: Sum(Time) <= K
-        pb_clauses = Dynamic_clauses_PB(K)
-
-        # Khởi tạo MaxSAT Solver RC2 với công thức hiện tại
-        with RC2(wcnf) as rc2:
-            # Thêm ràng buộc K vào như Hard Clauses
-            for c in pb_clauses:
-                rc2.add_clause(c)
-
-            # Giải
-            model = rc2.compute()
-
-            if model:
-                print(f"✅ SAT. Cost phụ = {rc2.cost}")
-                best_solution = get_solution(model)[0]
-                final_K = K
-                high = K - 1 # Thử tìm K nhỏ hơn
+            if self.solver.solve(assumptions=[selector]):
+                best_K = mid
+                high = mid - 1
             else:
-                print("❌ UNSAT")
-                low = K + 1 # K không đủ, tăng lên
+                low = mid + 1
 
-    end_time = time.perf_counter()
-    print(f"\n⏱ Tổng thời gian chạy: {end_time - start_time:.4f}s")
+        self.solver.delete()
+        return best_K
 
-    if best_solution:
-        print(f"🏆 Tìm thấy Cycle Time tối ưu: {final_K}")
-        print_solution(best_solution)
+
+# =============================================================================
+# 3. PHASE 2: MAXSAT OPTIMIZATION (Tối ưu Tổng thời gian)
+# =============================================================================
+def run_phase2_maxsat(data, optimal_K):
+    print(f"🔄 Phase 2: Optimizing Total Time with Cycle Time <= {optimal_K}...")
+
+    # WCNF: Weighted CNF (Định dạng cho MaxSAT)
+    wcnf = WCNF()
+    vpool = IDPool()
+
+    X = [[vpool.id(f'X_{j}_{s}') for s in range(data.Nw)] for j in range(data.Na)]
+    Y = [[vpool.id(f'Y_{s}_{r}') for r in range(data.Nr)] for s in range(data.Nw)]
+    Z = {}
+
+    def get_z(j, s, r):
+        if (j, s, r) not in Z:
+            z = vpool.id(f'Z_{j}_{s}_{r}')
+            Z[(j, s, r)] = z
+            x, y = X[j][s], Y[s][r]
+            # Hard clauses cho Z (Weight = None nghĩa là Hard)
+            wcnf.append([-z, x])
+            wcnf.append([-z, y])
+            wcnf.append([-x, -y, z])
+        return Z[(j, s, r)]
+
+    # 1. Hard Clauses (Giống hệt Phase 1)
+    for j in range(data.Na):
+        for c in CardEnc.equals(X[j], 1, vpool=vpool).clauses: wcnf.append(c)
+    for s in range(data.Nw):
+        for c in CardEnc.equals(Y[s], 1, vpool=vpool).clauses: wcnf.append(c)
+    for u in range(data.Na):
+        for v in data.adj[u]:
+            for s_u in range(data.Nw):
+                for s_v in range(s_u): wcnf.append([-X[u][s_u], -X[v][s_v]])
+
+    # Khởi tạo Z
+    for j in range(data.Na):
+        for s in range(data.Nw):
+            for r in range(data.Nr): get_z(j, s, r)
+
+    # 2. Hard Constraint: Cycle Time <= optimal_K (Kết quả từ Phase 1)
+    # Đây là điểm mấu chốt: Ta ép MaxSAT không được vượt quá thời gian Cycle Time tốt nhất
+    for s in range(data.Nw):
+        lits, weights = [], []
+        for j in range(data.Na):
+            for r in range(data.Nr):
+                if data.T[j][r] > 0:
+                    lits.append(Z[(j, s, r)])
+                    weights.append(data.T[j][r])
+        if lits:
+            # PBEnc.leq tạo Hard Clauses
+            for c in PBEnc.leq(lits, weights, optimal_K, vpool=vpool).clauses:
+                wcnf.append(c)
+
+    # 3. Soft Clauses: Minimize Total Time
+    # Logic: Với mỗi khả năng chọn Z_jsr, ta thêm 1 Soft Clause: "Không chọn Z_jsr"
+    # Nếu bộ giải CHỌN Z_jsr (Vi phạm clause này), nó phải trả chi phí = Time[j][r]
+    # MaxSAT sẽ cố gắng trả ít chi phí nhất -> Tổng thời gian nhỏ nhất
+    for j in range(data.Na):
+        for s in range(data.Nw):
+            for r in range(data.Nr):
+                t = data.T[j][r]
+                z = Z[(j, s, r)]
+                # Soft clause: [-z], weight = t
+                wcnf.append([-z], weight=t)
+
+    # Giải bằng RC2 (MaxSAT Solver)
+    with RC2(wcnf) as rc2:
+        model = rc2.compute()  # Tìm lời giải tối ưu
+        total_time_minimized = rc2.cost
+
+        if model:
+            return decode_solution(model, data, X, Y, vpool), total_time_minimized
+        return None, 0
+
+
+def decode_solution(model, data, X, Y, vpool):
+    model_set = set(model)
+    assignment = {}
+    s_robot = {}
+
+    # Map lại ID từ vpool sang giá trị thực
+    # Vì vpool của Phase 2 khác Phase 1
+
+    # Tìm Robot cho trạm
+    for s in range(data.Nw):
+        for r in range(data.Nr):
+            # Lấy ID thực tế từ vpool object
+            y_id = Y[s][r]
+            if y_id in model_set:
+                s_robot[s] = r
+                break
+
+    # Tìm Task cho trạm
+    for j in range(data.Na):
+        for s in range(data.Nw):
+            x_id = X[j][s]
+            if x_id in model_set:
+                r = s_robot.get(s, -1)
+                assignment[j] = {'station': s, 'robot': r, 'time': data.T[j][r]}
+                break
+    return assignment
+
+
+# =============================================================================
+# MAIN ORCHESTRATOR
+# =============================================================================
+def solve_lexicographic(filepath, num_stations):
+    start_global = time.time()
+    data = ProblemData(filepath, num_stations)
+
+    # --- STEP 1: Tìm Cycle Time nhỏ nhất (SAT) ---
+    print(f"🚀 Phase 1: Binary Search for Optimal Cycle Time...")
+    phase1 = Phase1Scheduler(data)
+    best_K = phase1.find_min_cycle_time()
+
+    if best_K == -1:
+        print("❌ Unsatisfiable (Phase 1). Check Input.")
+        return
+
+    print(f"✅ Found Optimal Cycle Time: {best_K}")
+
+    # --- STEP 2: Tìm Tổng thời gian nhỏ nhất với CT cố định (MaxSAT) ---
+    best_sol, min_total_time = run_phase2_maxsat(data, best_K)
+
+    runtime = time.time() - start_global
+
+    # --- OUTPUT ---
+    if best_sol:
+        print("\n" + "=" * 40)
+        print(f"🏆 FINAL RESULT (Lexicographic Optimization)")
+        print(f"   1. Cycle Time (Makespan): {best_K} (Optimal)")
+        print(f"   2. Total Time (Sum):      {min_total_time} (Minimized)")
+        print("=" * 40)
+
+        st_loads = [0] * num_stations
+        st_tasks = [[] for _ in range(num_stations)]
+        st_rob = {}
+
+        for j, info in best_sol.items():
+            s = info['station']
+            st_tasks[s].append((j, info['time']))
+            st_loads[s] += info['time']
+            st_rob[s] = info['robot']
+
+        for s in range(num_stations):
+            rid = st_rob.get(s, -1)
+            rname = f"Robot {rid + 1}" if rid != -1 else "N/A"
+            print(f"Station {s + 1} ({rname}) | Load: {st_loads[s]}")
+            for tid, t in st_tasks[s]:
+                print(f"  - Task {tid + 1:02d} ({t}s)")
+        print(f"\n⏱ Total Runtime: {runtime:.4f}s")
     else:
-        print("Không tìm thấy nghiệm nào.")
+        print("Error in Phase 2.")
 
-# =============================================================================
-# MAIN
-# =============================================================================
-def main():
-    global Na, Nw, Nr, T, LB, UB, CT, ip1, ip2, toposort, neighbors
-
-    # Tạo file dummy nếu chưa có để test code
-    import os
-    read_data("Dataset2.txt")
-    UB, LB, ip1, ip2, CT, toposort = Preprocess(Nw, Na, T, neighbors)
-
-    optimize_maxsat()
 
 if __name__ == "__main__":
-    main()
+    solve_lexicographic("Dataset2.txt", 3)
